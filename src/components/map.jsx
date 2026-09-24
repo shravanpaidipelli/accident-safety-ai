@@ -99,6 +99,8 @@ function Map() {
 
   const [loadingRoute, setLoadingRoute] = useState(false);
   const [routeRisk, setRouteRisk] = useState(null);
+  const [routeOptions, setRouteOptions] = useState([]);
+  const [selectedRouteIndex, setSelectedRouteIndex] = useState(0);
 
 
   // --------------------------------
@@ -268,6 +270,9 @@ function Map() {
     setRouteMessage("");
 
     setRoute([]);
+    setRouteOptions([]);
+    setSelectedRouteIndex(0);
+    setRouteRisk(null);
 
 
     try {
@@ -338,191 +343,202 @@ function Map() {
 
 
   // --------------------------------
-  // CALCULATE ROUTE USING OSRM
+  // CALCULATE MULTIPLE ROUTES USING OSRM
   // --------------------------------
 
-  const calculateRoute = async (
-    start,
-    end
-  ) => {
-
+  const calculateRoute = async (start, end) => {
     setLoadingRoute(true);
-
-    setRouteMessage(
-      "Calculating route..."
-    );
-
+    setRouteMessage("Calculating routes...");
+    setRouteRisk(null);
+    setRouteOptions([]);
+    setSelectedRouteIndex(0);
 
     try {
-
-      const startLongitude =
-        start[1];
-
-      const startLatitude =
-        start[0];
-
-
-      const endLongitude =
-        end[1];
-
-      const endLatitude =
-        end[0];
-
+      const startLongitude = start[1];
+      const startLatitude = start[0];
+      const endLongitude = end[1];
+      const endLatitude = end[0];
 
       const url =
         `https://router.project-osrm.org/route/v1/driving/` +
         `${startLongitude},${startLatitude};` +
         `${endLongitude},${endLatitude}` +
-        `?overview=full&geometries=geojson`;
+        `?overview=full&geometries=geojson&alternatives=true`;
 
-
-      const response =
-        await fetch(url);
-
-
-      const data =
-        await response.json();
-
+      const response = await fetch(url);
+      const data = await response.json();
 
       if (
         data.code !== "Ok" ||
         !data.routes ||
         data.routes.length === 0
       ) {
-
-        setRouteMessage(
-          "Unable to find a route."
-        );
-
+        setRouteMessage("Unable to find a route.");
         setLoadingRoute(false);
-
         return;
       }
 
-
-      const coordinates =
-        data.routes[0].geometry.coordinates;
-
-
-      const leafletRoute =
-        coordinates.map(
-          ([longitude, latitude]) => [
-            latitude,
-            longitude,
-          ]
+      const analyzedRoutes = data.routes.map((osrmRoute, index) => {
+        const leafletRoute = osrmRoute.geometry.coordinates.map(
+          ([longitude, latitude]) => [latitude, longitude]
         );
 
+        const nearbyHotspots = [];
 
-      setRoute(
-        leafletRoute
+        hotspots.forEach((hotspot) => {
+          let minimumDistance = Infinity;
+
+          leafletRoute.forEach((routePoint) => {
+            const distance = getDistanceInKm(
+              hotspot.position,
+              routePoint
+            );
+
+            if (distance < minimumDistance) {
+              minimumDistance = distance;
+            }
+          });
+
+          if (minimumDistance <= 1) {
+            nearbyHotspots.push({
+              ...hotspot,
+              distance: minimumDistance,
+            });
+          }
+        });
+
+        let riskScore = 0;
+
+        nearbyHotspots.forEach((hotspot) => {
+          const riskValue =
+            hotspot.risk === "HIGH"
+              ? 3
+              : hotspot.risk === "MEDIUM"
+              ? 2
+              : 1;
+
+          const proximityWeight = Math.max(
+            0.25,
+            1 - hotspot.distance
+          );
+
+          riskScore += riskValue * proximityWeight;
+        });
+
+        const riskLevel =
+          riskScore >= 3
+            ? "HIGH"
+            : riskScore > 0
+            ? "MEDIUM"
+            : "LOW";
+
+        return {
+          index,
+          route: leafletRoute,
+          distanceKm: osrmRoute.distance / 1000,
+          durationMin: osrmRoute.duration / 60,
+          nearbyHotspots,
+          riskScore,
+          riskLevel,
+        };
+      });
+
+      const fastestRoute = analyzedRoutes[0];
+
+      const saferRoute = [...analyzedRoutes].sort((a, b) => {
+        if (a.riskScore !== b.riskScore) {
+          return a.riskScore - b.riskScore;
+        }
+
+        return a.durationMin - b.durationMin;
+      })[0];
+
+      const initialIndex =
+        saferRoute.index !== fastestRoute.index &&
+        saferRoute.riskScore < fastestRoute.riskScore
+          ? saferRoute.index
+          : fastestRoute.index;
+
+      setRouteOptions(analyzedRoutes);
+      setSelectedRouteIndex(initialIndex);
+      setRoute(analyzedRoutes[initialIndex].route);
+
+      updateRouteRisk(analyzedRoutes[initialIndex]);
+
+      const selected = analyzedRoutes[initialIndex];
+
+      const label =
+        initialIndex === saferRoute.index &&
+        saferRoute.index !== fastestRoute.index
+          ? "Safer route selected"
+          : "Fastest route selected";
+
+      setRouteMessage(
+        `${label} • ${selected.distanceKm.toFixed(1)} km • ${Math.round(
+          selected.durationMin
+        )} min`
       );
-      // --------------------------------
-// ANALYZE ROUTE FOR ACCIDENT HOTSPOTS
-// --------------------------------
-
-const nearbyHotspots = [];
-
-hotspots.forEach((hotspot) => {
-
-  let minimumDistance = Infinity;
-
-  leafletRoute.forEach((routePoint) => {
-
-    const distance = getDistanceInKm(
-      hotspot.position,
-      routePoint
-    );
-
-    if (distance < minimumDistance) {
-      minimumDistance = distance;
+    } catch (error) {
+      console.error(error);
+      setRouteMessage("Unable to calculate route.");
     }
 
-  });
+    setLoadingRoute(false);
+  };
 
+  // --------------------------------
+  // UPDATE RISK FOR SELECTED ROUTE
+  // --------------------------------
 
-  // Consider hotspot dangerous if
-  // it is within 1 km of the route
-
-  if (minimumDistance <= 1) {
-
-    nearbyHotspots.push({
-      ...hotspot,
-      distance: minimumDistance,
-    });
-
-  }
-
-});
-
-
-if (nearbyHotspots.length > 0) {
-
-  // Find highest-risk hotspot
-
-  const highRiskHotspot =
-    nearbyHotspots.find(
+  const updateRouteRisk = (selected) => {
+    const highestRiskHotspot = selected.nearbyHotspots.find(
       (hotspot) => hotspot.risk === "HIGH"
     );
 
-
-  if (highRiskHotspot) {
-
-    setRouteRisk({
-      level: "HIGH",
-      hotspot: highRiskHotspot,
-    });
-
-  } else {
-
-    setRouteRisk({
-      level: "MEDIUM",
-      hotspot: nearbyHotspots[0],
-    });
-
-  }
-
-} else {
-
-  setRouteRisk({
-    level: "LOW",
-    hotspot: null,
-  });
-
-}
-
-
-      const distance =
-        data.routes[0].distance / 1000;
-
-
-      const duration =
-        data.routes[0].duration / 60;
-
-
-      setRouteMessage(
-        `Route found • ${distance.toFixed(
-          1
-        )} km • ${Math.round(
-          duration
-        )} min`
-      );
-
-
-    } catch (error) {
-
-      console.error(error);
-
-      setRouteMessage(
-        "Unable to calculate route."
-      );
-
+    if (highestRiskHotspot) {
+      setRouteRisk({
+        level: "HIGH",
+        hotspot: highestRiskHotspot,
+      });
+    } else if (selected.nearbyHotspots.length > 0) {
+      setRouteRisk({
+        level: "MEDIUM",
+        hotspot: selected.nearbyHotspots[0],
+      });
+    } else {
+      setRouteRisk({
+        level: "LOW",
+        hotspot: null,
+      });
     }
-
-
-    setLoadingRoute(false);
-
   };
 
+  // --------------------------------
+  // SELECT A ROUTE
+  // --------------------------------
+
+  const selectRoute = (index) => {
+    const selected = routeOptions[index];
+
+    if (!selected) return;
+
+    setSelectedRouteIndex(index);
+    setRoute(selected.route);
+    updateRouteRisk(selected);
+
+    const fastestIndex = routeOptions.reduce(
+      (bestIndex, item, currentIndex, array) =>
+        item.durationMin < array[bestIndex].durationMin
+          ? currentIndex
+          : bestIndex,
+      0
+    );
+
+    setRouteMessage(
+      `${index === fastestIndex ? "Fastest route selected" : "Alternative route selected"} • ` +
+      `${selected.distanceKm.toFixed(1)} km • ${Math.round(selected.durationMin)} min`
+    );
+  };
 
   // --------------------------------
   // DISPLAY MAP
@@ -626,6 +642,57 @@ if (nearbyHotspots.length > 0) {
         </div>
 
       )}
+      {/* ROUTE OPTIONS */}
+      {routeOptions.length > 1 && (
+        <div className="route-options-panel">
+          <div className="route-options-title">🛣️ Route Options</div>
+
+          {routeOptions.map((option, index) => (
+            <button
+              key={index}
+              className={`route-option ${
+                selectedRouteIndex === index ? "selected" : ""
+              }`}
+              onClick={() => selectRoute(index)}
+            >
+              <div className="route-option-top">
+                <strong>
+                  {index === 0
+                    ? "Fastest Route"
+                    : `Alternative Route ${index}`}
+                </strong>
+
+                {selectedRouteIndex === index && (
+                  <span className="route-selected-badge">Selected</span>
+                )}
+              </div>
+
+              <div className="route-option-details">
+                {option.distanceKm.toFixed(1)} km •{" "}
+                {Math.round(option.durationMin)} min
+              </div>
+
+              <div
+                className={`route-option-risk ${option.riskLevel.toLowerCase()}`}
+              >
+                {option.riskLevel === "HIGH"
+                  ? "🔴 High risk"
+                  : option.riskLevel === "MEDIUM"
+                  ? "🟠 Medium risk"
+                  : "🟢 Low risk"}
+              </div>
+
+              {option.nearbyHotspots.length > 0 && (
+                <div className="route-hotspot-count">
+                  {option.nearbyHotspots.length} hotspot
+                  {option.nearbyHotspots.length > 1 ? "s" : ""} near route
+                </div>
+              )}
+            </button>
+          ))}
+        </div>
+      )}
+
       {/* ROUTE RISK WARNING */}
 
 {routeRisk && (
@@ -764,21 +831,41 @@ if (nearbyHotspots.length > 0) {
         {/* --------------------------------
             ROUTE
         -------------------------------- */}
+        {routeOptions.length > 0 &&
+          routeOptions.map((option, index) => (
+            <Polyline
+              key={`route-${index}`}
+              positions={option.route}
+              pathOptions={{
+                color:
+                  index === selectedRouteIndex
+                    ? "#2563eb"
+                    : "#64748b",
+                weight:
+                  index === selectedRouteIndex
+                    ? 6
+                    : 4,
+                opacity:
+                  index === selectedRouteIndex
+                    ? 0.9
+                    : 0.45,
+                dashArray:
+                  index === selectedRouteIndex
+                    ? undefined
+                    : "10 10",
+              }}
+            />
+          ))}
 
-        {route.length > 0 && (
-
+        {routeOptions.length === 0 && route.length > 0 && (
           <Polyline
-
             positions={route}
-
             pathOptions={{
               color: "#2563eb",
               weight: 6,
               opacity: 0.8,
             }}
-
           />
-
         )}
 
 

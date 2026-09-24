@@ -383,3 +383,91 @@ body {
   line-height: 1.5;
   box-shadow: 0 3px 10px rgba(0, 0, 0, 0.25);
 }
+/* ================================
+   SAFER ROUTE OPTIONS
+================================ */
+
+.route-options-panel {
+  position: absolute;
+  top: 105px;
+  left: 15px;
+  z-index: 1000;
+  width: 260px;
+  background: white;
+  padding: 12px;
+  border-radius: 10px;
+  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.25);
+}
+
+.route-options-title {
+  font-size: 14px;
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+
+.route-option {
+  width: 100%;
+  text-align: left;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 10px;
+  margin-bottom: 8px;
+  cursor: pointer;
+  transition: 0.2s;
+}
+
+.route-option:hover {
+  background: #eef2ff;
+}
+
+.route-option.selected {
+  border: 2px solid #2563eb;
+  background: #eff6ff;
+}
+
+.route-option-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.route-selected-badge {
+  font-size: 10px;
+  background: #2563eb;
+  color: white;
+  padding: 3px 6px;
+  border-radius: 10px;
+}
+
+.route-option-details {
+  font-size: 12px;
+  margin-top: 5px;
+  color: #475569;
+}
+
+.route-option-risk {
+  font-size: 12px;
+  font-weight: 600;
+  margin-top: 6px;
+}
+
+.route-option-risk.high {
+  color: #dc2626;
+}
+
+.route-option-risk.medium {
+  color: #ea580c;
+}
+
+.route-option-risk.low {
+  color: #16a34a;
+}
+
+.route-hotspot-count {
+  font-size: 11px;
+  margin-top: 4px;
+  color: #64748b;
+}
